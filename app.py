@@ -2,12 +2,11 @@ import os
 import requests
 import json
 import tempfile
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse
 from gtts import gTTS
 import speech_recognition as sr
 from pydub import AudioSegment
-from fastapi.staticfiles import StaticFiles
 
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
@@ -16,37 +15,46 @@ if not API_KEY:
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={API_KEY}"
 
 app = FastAPI()
-
-# تخزين الحوار للحفاظ على السياق
 chat_history = []
 
-# -----------------------------
-# واجهة ويب لتسجيل الصوت
-# -----------------------------
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
     <title>Gemini Voice Chat</title>
+    <style>
+        body { font-family: Arial; max-width: 600px; margin: 40px auto; }
+        #recordBtn { padding: 10px 20px; font-size:16px; }
+        #status { color: red; font-weight:bold; margin-left:10px; }
+        #chatBox p { margin:5px 0; }
+    </style>
 </head>
 <body>
 <h2>Gemini Voice Chat</h2>
+
 <button id="recordBtn">تسجيل صوتك</button>
+<span id="status"></span>
 <div id="chatBox" style="margin-top:20px;"></div>
 <audio id="voiceReply" controls></audio>
 
 <script>
 let mediaRecorder;
 let audioChunks = [];
+let recording = false;
 
 document.getElementById("recordBtn").onclick = async function() {
+    const status = document.getElementById("status");
+
     if(!mediaRecorder){
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.onstop = async () => {
+            recording = false;
+            status.innerText = "";
             const blob = new Blob(audioChunks, {type:'audio/webm'});
             audioChunks = [];
+
             const formData = new FormData();
             formData.append("audio", blob, "voice.webm");
 
@@ -64,9 +72,12 @@ document.getElementById("recordBtn").onclick = async function() {
         };
     }
 
-    if(mediaRecorder.state === "inactive"){
+    if(!recording){
         mediaRecorder.start();
-        setTimeout(()=>mediaRecorder.stop(), 4000); // تسجيل 4 ثواني
+        recording = true;
+        status.innerText = "التسجيل جاري 🔴";
+    } else {
+        mediaRecorder.stop();
     }
 };
 </script>
@@ -91,8 +102,8 @@ def ask_gemini(text: str) -> str:
     chat_history.append(f"Gemini: {reply}")
     return reply
 
-def text_to_speech(text: str, filename: str):
-    tts = gTTS(text=text, lang="en")
+def text_to_speech(text: str, filename: str, lang="en"):
+    tts = gTTS(text=text, lang=lang)
     tts.save(filename)
 
 def speech_to_text(file_path: str) -> str:
@@ -104,10 +115,10 @@ def speech_to_text(file_path: str) -> str:
     with sr.AudioFile(wav_file) as source:
         audio_data = r.record(source)
         try:
-            return r.recognize_google(audio_data)
+            return r.recognize_google(audio_data, language="ar-EG")  # Arabic
         except:
             return ""
-    
+
 # -----------------------------
 # مسارات FastAPI
 # -----------------------------
@@ -128,7 +139,7 @@ async def voice(audio: UploadFile = File(...)):
     reply_text = ask_gemini(user_text)
 
     tmp_reply = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    text_to_speech(reply_text, tmp_reply.name)
+    text_to_speech(reply_text, tmp_reply.name, lang="ar")
     tmp_reply.close()
 
     return FileResponse(tmp_reply.name, media_type="audio/mpeg")
