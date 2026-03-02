@@ -4,3 +4,4 @@ requests
 gtts
 SpeechRecognition
 pydub
+python-multipart
